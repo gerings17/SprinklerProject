@@ -1,8 +1,6 @@
 package org.jointheleague.sprinkler;
 
 import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -12,7 +10,6 @@ import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
-import java.util.GregorianCalendar;
 import java.util.HashSet;
 import java.util.List;
 import java.util.TimeZone;
@@ -28,16 +25,14 @@ public class ScheduleReader {
 
 	private static final TimeZone TZ = TimeZone.getTimeZone("PST");
 
-	private final Calendar now = GregorianCalendar.getInstance();
-
 	private static final Logger logger = Logger
 			.getLogger(SprinklerController.class.getName());
 
 	private static final String[] WEEKDAYS = new String[] { "Monday",
 			"Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" };
 
-	private int cachedVersion = -1;
-	private List<GpioAction> cachedActionList;
+	private int version = -1;
+	private List<GpioAction> actionList = null;
 
 	public static void main(String[] args) throws JSONException, IOException,
 			ParseException {
@@ -83,6 +78,7 @@ public class ScheduleReader {
 
 	public void parseShedule(JSONObject schedule) throws IOException,
 			JSONException, ParseException {
+		version = Integer.parseInt(schedule.getString("version"));
 		JSONArray zones = schedule.getJSONArray("schedule");
 		List<GpioAction> gpioActions = new ArrayList<GpioAction>();
 		for (int i = 0; i < zones.length(); i++) {
@@ -90,24 +86,25 @@ public class ScheduleReader {
 			int zoneId = zone.getInt("Zone");
 			for (String day : WEEKDAYS) {
 				if (zone.has(day)) {
-					JSONObject obj = zone.getJSONObject(day);
-					String startTime = obj.getString("start");
-					GpioAction a = new GpioAction(new HashSet<Integer>(),
-							new HashSet<Integer>(), getCalendarTime(day,
-									startTime));
-					a.getHeadsOn().add(zoneId);
-					gpioActions.add(a);
-					String endTime = obj.getString("end");
-					a = new GpioAction(new HashSet<Integer>(),
-							new HashSet<Integer>(), getCalendarTime(day,
-									endTime));
-					a.getHeadsOff().add(zoneId);
-					gpioActions.add(a);
+					JSONObject daySchedule = zone.getJSONObject(day);
+					if (daySchedule.getString("power").equals("on")) {
+						String startTime = daySchedule.getString("start");
+						GpioAction a = new GpioAction(new HashSet<Integer>(),
+								new HashSet<Integer>(), getCalendarTime(day,
+										startTime));
+						a.getHeadsOn().add(zoneId);
+						gpioActions.add(a);
+						String endTime = daySchedule.getString("end");
+						a = new GpioAction(new HashSet<Integer>(),
+								new HashSet<Integer>(), getCalendarTime(day, endTime));
+						a.getHeadsOff().add(zoneId);
+						gpioActions.add(a);
+					}
 				}
 			}
 		}
 		Collections.sort(gpioActions);
-		cachedActionList = compress(gpioActions);
+		actionList = compress(gpioActions);
 	}
 
 	private List<GpioAction> compress(List<GpioAction> gpioActions) {
@@ -126,10 +123,10 @@ public class ScheduleReader {
 		return result;
 	}
 
-	private Calendar getCalendarTime(String day, String startTime)
+	private Calendar getCalendarTime(String day, String timeOfDay)
 			throws ParseException {
-		Pattern timePattern = Pattern.compile("(\\d?\\d):(\\d\\d)\\s+([AP]M)");
-		Matcher m = timePattern.matcher(startTime);
+		Pattern timePattern = Pattern.compile("(\\d?\\d):(\\d\\d)\\s*([AP]M)");
+		Matcher m = timePattern.matcher(timeOfDay);
 		if (m.matches()) {
 
 			Calendar t = Calendar.getInstance(TZ);
@@ -158,7 +155,7 @@ public class ScheduleReader {
 			t.set(Calendar.MILLISECOND, 0);
 			return t;
 		} else {
-			throw new ParseException("Not a time spec: " + startTime, 0);
+			throw new ParseException("Not a time spec: " + timeOfDay, 0);
 		}
 	}
 
@@ -166,14 +163,14 @@ public class ScheduleReader {
 	 * @return the version
 	 */
 	public int getVersion() {
-		return cachedVersion;
+		return version;
 	}
 
 	/**
 	 * @return the ActionList
 	 */
 	public List<GpioAction> getActionList() {
-		return cachedActionList;
+		return actionList;
 	}
 
 }

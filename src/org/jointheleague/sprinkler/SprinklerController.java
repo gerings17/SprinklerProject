@@ -2,13 +2,14 @@ package org.jointheleague.sprinkler;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.MalformedURLException;
 import java.net.URL;
+import java.text.ParseException;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
  * A SprinklerController instance regularly checks to see if there are updates
@@ -23,9 +24,7 @@ public class SprinklerController {
 	// Usage
 	private final static String USAGE = "Usage: sudo java -jar RPiGPIOTester.jar";
 
-	private static long SCHEDULE_CHECK_PERIOD = 20000000L; // = 5 hours, 33
-															// minutes and 20
-															// seconds
+	private static long SCHEDULE_CHECK_PERIOD = 60 * 60 * 1000; // = 1 hour
 
 	private static final Logger logger = Logger
 			.getLogger(SprinklerController.class.getName());
@@ -33,11 +32,12 @@ public class SprinklerController {
 	/**
 	 * 
 	 * @param args
-	 * @throws MalformedURLException
 	 * @throws InterruptedException
+	 * @throws ParseException
+	 * @throws IOException
 	 */
-	public static void main(String[] args) throws MalformedURLException,
-			InterruptedException {
+	public static void main(String[] args) throws InterruptedException,
+			ParseException, IOException {
 		if (args.length != 0) {
 			System.out.println(USAGE);
 			return;
@@ -50,50 +50,59 @@ public class SprinklerController {
 	 * Regularly checks if there is a more recent update online, and if that is
 	 * the case, tries to retrieve and read it.
 	 * 
-	 * @throws MalformedURLException
-	 *             if the URL for the schedule is malformed
 	 * @throws InterruptedException
 	 *             if interrupted
+	 * @throws ParseException
+	 * @throws IOException
 	 */
-	public void run() throws MalformedURLException, InterruptedException {
+	public void run() throws InterruptedException, ParseException, IOException {
 		ScheduleReader reader = new ScheduleReader();
 		URL url = getURL();
-		System.out.println(url);
-		// int lastRead = -1;
+		int lastRead = -1;
 		ScheduleRunner runner = null;
 		while (true) {
 			try {
-				reader.read(url);
-				// if (reader.getVersion() > lastRead) {
-				if (runner != null) {
-					runner.exitGracefully();
+				JSONObject schedule = reader.read(url);
+				reader.parseShedule(schedule);
+				if (reader.getVersion() > lastRead) {
+					if (runner != null) {
+						runner.exitGracefully();
+					}
+					List<GpioAction> actions = reader.getActionList();
+					logger.log(Level.INFO, "Got actions");
+					lastRead = reader.getVersion();
+					// runner = new ScheduleRunner(new Pi4JGpio(), actions);
+					runner = new ScheduleRunner(new MockGpio(), actions);
+					runner.start();
 				}
-				List<GpioAction> actions = reader.getActionList();
-				// lastRead = reader.getVersion();
-				runner = new ScheduleRunner(actions);
-				runner.start();
-				// }
 				Thread.sleep(SCHEDULE_CHECK_PERIOD / TestTime.TIME_FACTOR);
 			} catch (IOException e) {
-				logger.log(Level.WARNING, e.getMessage());
+				logger.log(Level.SEVERE, e.getMessage());
 			} catch (JSONException e) {
-				logger.log(Level.WARNING, e.getMessage());
+				logger.log(Level.SEVERE, e.getMessage());
+//			} catch (Exception e) {
+//				logger.log(Level.SEVERE, e.getClass().getName());
 			}
 		}
 
 	}
 
-	private URL getURL() throws MalformedURLException {
-		IdKeeper idKeeper = new IdKeeper();
-		try {
-			File f = new File("/home/pi/schedules/s" + idKeeper.getId()
-					+ ".json");
-			return f.toURI().toURL();
-			// return new URL("http://sprinklerwiz.appspot.com/schedules/s"
-			// + idKeeper.getId() + ".xml");
-		} catch (IOException e) {
-			return null;
-		}
-	}
+//	private URL getURL() throws MalformedURLException {
+//		IdKeeper idKeeper = new IdKeeper();
+//		try {
+//			return new URL(
+//					"http://everydropcounts.jointheleague.org/schedules/s"
+//							+ idKeeper.getId());
+//		} catch (IOException e) {
+//			return null;
+//		}
+//	}
 
+	private URL getURL() throws IOException {
+		IdKeeper idKeeper = new IdKeeper();
+		File home = new File(System.getProperty("user.home"));
+		File f = new File(home, "schedules/s" + idKeeper.getId() + ".json");
+		logger.log(Level.INFO, "File: {0}", f.toString());
+		return f.toURI().toURL();
+	}
 }

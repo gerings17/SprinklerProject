@@ -1,4 +1,5 @@
-{"schedule":[
+{"version":"1",
+ "schedule":[
  {"Zone":"1",
   "Wednesday":{"power":"on","start":"5:40 AM","end":"5:45 AM"},
   "Saturday":{"power":"on","start":"5:40 AM","end":"5:45 AM"},

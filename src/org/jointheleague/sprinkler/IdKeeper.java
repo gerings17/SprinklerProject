@@ -29,7 +29,8 @@ public class IdKeeper {
 
 	public String getId() throws IOException {
 		String result = null;
-		File idFile = new File("/home/pi/.sprinklerwiz/id.txt");
+		File home = new File(System.getProperty("user.home"));
+		File idFile = new File(home, ".sprinkler/id.txt");
 		File idDir = idFile.getParentFile();
 		if (!idDir.exists()) {
 			idDir.mkdirs();
