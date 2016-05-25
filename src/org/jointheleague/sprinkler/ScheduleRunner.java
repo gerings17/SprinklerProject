@@ -2,10 +2,13 @@ package org.jointheleague.sprinkler;
 
 import java.util.Date;
 import java.util.List;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-import com.pi4j.io.gpio.*;
+import com.pi4j.io.gpio.GpioPinDigitalOutput;
+import com.pi4j.io.gpio.PinState;
+import com.pi4j.io.gpio.RaspiPin;
 
 /**
  * A ScheduleRunner instance executes repeatedly the list of actions that is
@@ -17,15 +20,20 @@ import com.pi4j.io.gpio.*;
 public class ScheduleRunner extends Thread {
 
 	private List<GpioAction> actions;
-	private final static GpioController gpio = GpioFactory.getInstance();
+	// private final static GpioController gpio = GpioFactory.getInstance();
+	private final GpioInterface gpio;
 	// Output pins
-	private final static GpioPinDigitalOutput[] myLeds = getGPIOs() ;
+	private final GpioPinDigitalOutput[] myLeds;
+	private volatile boolean running;
 
 	private static final Logger logger = Logger
 			.getLogger(SprinklerController.class.getName());
 
-	public ScheduleRunner(List<GpioAction> actions) {
+	public ScheduleRunner(GpioInterface gpio, List<GpioAction> actions) {
+
 		this.actions = actions;
+		this.gpio = gpio;
+		this.myLeds = getDigitalOutputs();
 	}
 
 	/**
@@ -41,26 +49,23 @@ public class ScheduleRunner extends Thread {
 	 */
 	@Override
 	public void run() {
+		running = true;
 		try {
-			while (true) {
+			while (running) {
 				for (GpioAction action : actions) {
 					long sleepTime = action.getTimeOfAction()
 							- TestTime.currentTimeMillis();
 					if (0L < sleepTime) {
-//						logger.log(Level.INFO, "Going to sleep for {0}ms",
-//								sleepTime);
 						Thread.sleep(sleepTime / TestTime.TIME_FACTOR);
+						Set<Integer> head = action.getHeadsOff();
+						for (Integer i : head) {
+							myLeds[i.intValue() - 1].setState(true);
+						}
+						head = action.getHeadsOn();
+						for (Integer i : head) {
+							myLeds[i.intValue() - 1].setState(false);
+						}
 					}
-					int[] head = action.getHeadsOff();
-					for (int i = 0; i < head.length; i++) {
-						 myLeds[i].setState(PinState.HIGH);
-					}
-					head = action.getHeadsOn();
-					for (int i = 0; i < head.length; i++) {
-						 myLeds[i].setState(PinState.LOW);
-					}
-//					logger.log(Level.INFO, "{0}: {1}", new Object[] {
-//							new Date(TestTime.currentTimeMillis()), action });
 					action.addWeek();
 				}
 			}
@@ -71,10 +76,10 @@ public class ScheduleRunner extends Thread {
 		} finally {
 			// Set all pins to "off"
 			for (int i = 0; i < myLeds.length; i++) {
-				 myLeds[i].setState(PinState.HIGH);
+				myLeds[i].setState(true);
 			}
 			logger.info("Turning all heads off.");
-			gpio.shutdown();
+			// gpio.shutdown();
 		}
 	}
 
@@ -85,6 +90,7 @@ public class ScheduleRunner extends Thread {
 	 *             if interrupted while waiting for this runner to die.
 	 */
 	public void exitGracefully() throws InterruptedException {
+		running = false;
 		if (isAlive()) {
 			interrupt();
 			join();
@@ -96,18 +102,26 @@ public class ScheduleRunner extends Thread {
 	 * 
 	 * @return a GpioGateway instance
 	 */
-	private static GpioPinDigitalOutput [] getGPIOs() {
-		GpioPinDigitalOutput[] myLeds = new GpioPinDigitalOutput[8];
-		myLeds[0] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_00, PinState.HIGH);
-        myLeds[1] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_01, PinState.HIGH);
-        myLeds[2] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_02, PinState.HIGH);
-        myLeds[3] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_03, PinState.HIGH);
-        myLeds[4] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_04, PinState.HIGH);
-        myLeds[5] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_05, PinState.HIGH);
-        myLeds[6] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_06, PinState.HIGH);
-        myLeds[7] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_21, PinState.HIGH);
-        
-        return myLeds;
+	private GpioPinDigitalOutput[] getDigitalOutputs() {
+		GpioPinDigitalOutput[] leds = new GpioPinDigitalOutput[8];
+		leds[0] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_00,
+				PinState.HIGH);
+		leds[1] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_01,
+				PinState.HIGH);
+		leds[2] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_02,
+				PinState.HIGH);
+		leds[3] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_03,
+				PinState.HIGH);
+		leds[4] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_04,
+				PinState.HIGH);
+		leds[5] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_05,
+				PinState.HIGH);
+		leds[6] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_06,
+				PinState.HIGH);
+		leds[7] = gpio.provisionDigitalOutputPin(RaspiPin.GPIO_21,
+				PinState.HIGH);
+
+		return leds;
 	}
 
 }

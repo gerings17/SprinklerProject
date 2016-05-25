@@ -1,172 +1,176 @@
 package org.jointheleague.sprinkler;
 
-import java.net.MalformedURLException;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
 import java.net.URL;
 import java.text.ParseException;
-import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
-import java.util.Date;
-import java.util.GregorianCalendar;
-import java.util.Iterator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.TimeZone;
-import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
-import org.dom4j.Attribute;
-import org.dom4j.Document;
-import org.dom4j.DocumentException;
-import org.dom4j.Element;
-import org.dom4j.io.SAXReader;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 public class ScheduleReader {
 
 	private static final TimeZone TZ = TimeZone.getTimeZone("PST");
 
-	private final Calendar now = GregorianCalendar.getInstance();
-
 	private static final Logger logger = Logger
 			.getLogger(SprinklerController.class.getName());
 
-	private int cachedVersion = -1;
-	private List<GpioAction> cachedActionList;
+	private static final String[] WEEKDAYS = new String[] { "Monday",
+			"Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" };
 
-	public static void main(String[] args) throws DocumentException {
+	private int version = -1;
+	private List<GpioAction> actionList = null;
+
+	public static void main(String[] args) throws JSONException, IOException,
+			ParseException {
 
 		ScheduleReader reader = new ScheduleReader();
-		// URL url = reader.getClass().getResource("Schedules.xml");
-		URL url = null;
-		try {
-			url = new URL("http://localhost:8888/schedules/Schedules.xml");
-		} catch (MalformedURLException e) {
-			logger.log(Level.SEVERE, e.getMessage());
-			return;
-		}
-		reader.read(url);
+		URL url = reader.getClass().getResource("test.json");
+		// URL url = null;
+		// try {
+		// url = new URL("http://98.176.141.155:3000/get/TEST");
+		// } catch (MalformedURLException e) {
+		// logger.log(Level.SEVERE, e.getMessage());
+		// return;
+		// }
+		JSONObject schedule = reader.read(url);
+		reader.parseShedule(schedule);
 		List<GpioAction> list = reader.getActionList();
 		for (GpioAction action : list) {
 			System.out.println(action);
 		}
 	}
 
-	public void read(URL url) throws DocumentException {
-		SAXReader reader = new SAXReader();
-		Document document = reader.read(url);
-		Element root = document.getRootElement();
-		String versionString = root.attributeValue("version");
-		if (versionString == null) {
-			return;
+	private static String readAll(Reader rd) throws IOException {
+		StringBuilder sb = new StringBuilder();
+		int cp;
+		while ((cp = rd.read()) != -1) {
+			sb.append((char) cp);
 		}
-		int version = 0;
+		return sb.toString();
+	}
+
+	public JSONObject read(URL url) throws IOException, JSONException {
+		BufferedReader rd = null;
 		try {
-			version = Integer.parseInt(versionString);
-		} catch (NumberFormatException ex) {
+			InputStream is = url.openStream();
+			rd = new BufferedReader(new InputStreamReader(is));
+			String jsonText = readAll(rd);
+			JSONObject json = new JSONObject(jsonText);
+			return json;
+		} finally {
+			rd.close();
 		}
-		if (version > cachedVersion) {
-			cachedVersion = version;
-			cachedActionList = new ArrayList<GpioAction>();
-			now.setTimeInMillis(TestTime.currentTimeMillis());
-			for (@SuppressWarnings("unchecked")
-			Iterator<Element> i = root.elementIterator("schedule"); i.hasNext();) {
-				Element schedule = i.next();
-				for (int day : getDaysOfWeek(schedule)) {
-					if (day == 0) { // value 0 used for erroneous day
-						continue;
-					}
-					for (@SuppressWarnings("unchecked")
-					Iterator<Element> j = schedule.elementIterator("action"); j
-							.hasNext();) {
-						Element action = j.next();
-						try {
-							cachedActionList.add(createGpioAction(day, action));
-						} catch (ParseException e) {
-							continue;
-						} catch (NumberFormatException ex) {
-							continue;
-						}
+	}
+
+	public void parseShedule(JSONObject schedule) throws IOException,
+			JSONException, ParseException {
+		version = Integer.parseInt(schedule.getString("version"));
+		JSONArray zones = schedule.getJSONArray("schedule");
+		List<GpioAction> gpioActions = new ArrayList<GpioAction>();
+		for (int i = 0; i < zones.length(); i++) {
+			JSONObject zone = zones.getJSONObject(i);
+			int zoneId = zone.getInt("Zone");
+			for (String day : WEEKDAYS) {
+				if (zone.has(day)) {
+					JSONObject daySchedule = zone.getJSONObject(day);
+					if (daySchedule.getString("power").equals("on")) {
+						String startTime = daySchedule.getString("start");
+						GpioAction a = new GpioAction(new HashSet<Integer>(),
+								new HashSet<Integer>(), getCalendarTime(day,
+										startTime));
+						a.getHeadsOn().add(zoneId);
+						gpioActions.add(a);
+						String endTime = daySchedule.getString("end");
+						a = new GpioAction(new HashSet<Integer>(),
+								new HashSet<Integer>(), getCalendarTime(day, endTime));
+						a.getHeadsOff().add(zoneId);
+						gpioActions.add(a);
 					}
 				}
 			}
-			Collections.sort(cachedActionList);
 		}
+		Collections.sort(gpioActions);
+		actionList = compress(gpioActions);
 	}
 
-	private GpioAction createGpioAction(int day, Element action)
-			throws ParseException, NumberFormatException {
-		// the ON heads
-		String onValue = action.attributeValue("on");
-		int[] on = null;
-		if (onValue != null) {
-			String[] onStrings = onValue.trim().split(", *");
-			on = new int[onStrings.length];
-			for (int k = 0; k < on.length; k++) {
-				on[k] = Integer.parseInt(onStrings[k]);
-			}
-		} else {
-			on = new int[0];
-		}
-		// the OFF heads
-		String offValue = action.attributeValue("off");
-		int off[] = null;
-		if (offValue != null) {
-			String[] offStrings = action.attributeValue("off").trim()
-					.split(", *");
-			off = new int[offStrings.length];
-			for (int k = 0; k < off.length; k++) {
-				off[k] = Integer.parseInt(offStrings[k]);
-			}
-		} else {
-			off = new int[0];
-		}
-		// the time of the action
-		SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
-		dateFormat.setTimeZone(TZ);
-		Date d = dateFormat.parse(action.attributeValue("time"));
-		Calendar timeOfDay = GregorianCalendar.getInstance();
-		timeOfDay.setTime(d);
-		Calendar time = (Calendar) now.clone();
-		time.set(Calendar.HOUR_OF_DAY, timeOfDay.get(Calendar.HOUR_OF_DAY));
-		time.set(Calendar.MINUTE, timeOfDay.get(Calendar.MINUTE));
-		time.set(Calendar.SECOND, timeOfDay.get(Calendar.SECOND));
-		time.set(Calendar.DAY_OF_WEEK, day);
-		if (time.before(now)) {
-			time.add(Calendar.DAY_OF_WEEK, 7);
-		}
-		// return a new GpioAction
-		return new GpioAction(on, off, time);
-	}
-
-	private int[] getDaysOfWeek(Element schedule) {
-		Attribute attr = schedule.attribute("day_of_week");
-		if (attr == null) {
-			return null;
-		}
-		String[] days = attr.getValue().trim().split(", *");
-		int[] result = new int[days.length];
-		for (int i = 0; i < days.length; i++) {
-			try {
-				result[i] = Integer.parseInt(days[i]);
-			} catch (NumberFormatException ex) {
-				result[i] = 0;
+	private List<GpioAction> compress(List<GpioAction> gpioActions) {
+		List<GpioAction> result = new ArrayList<GpioAction>();
+		GpioAction current = gpioActions.remove(0);
+		for (GpioAction a : gpioActions) {
+			if (current.getTimeOfAction() == a.getTimeOfAction()) {
+				current.getHeadsOff().addAll(a.getHeadsOff());
+				current.getHeadsOn().addAll(a.getHeadsOn());
+			} else {
+				result.add(current);
+				current = a;
 			}
 		}
+		result.add(current);
 		return result;
+	}
+
+	private Calendar getCalendarTime(String day, String timeOfDay)
+			throws ParseException {
+		Pattern timePattern = Pattern.compile("(\\d?\\d):(\\d\\d)\\s*([AP]M)");
+		Matcher m = timePattern.matcher(timeOfDay);
+		if (m.matches()) {
+
+			Calendar t = Calendar.getInstance(TZ);
+			int dayOfweek = 0;
+			for (int i = 0; i < WEEKDAYS.length; i++) {
+				if (WEEKDAYS[i].equals(day)) {
+					dayOfweek = (Calendar.MONDAY + i) % 7;
+					break;
+				}
+			}
+			int hour = Integer.parseInt(m.group(1));
+			if (hour == 12) {
+				if (m.group(3).equals("AM")) {
+					hour = 0;
+				}
+			} else {
+				if (m.group(3).equals("PM")) {
+					hour += 12;
+				}
+			}
+			int minutes = Integer.parseInt(m.group(2));
+			t.set(Calendar.HOUR_OF_DAY, hour);
+			t.set(Calendar.MINUTE, minutes);
+			t.set(Calendar.DAY_OF_WEEK, dayOfweek);
+			t.set(Calendar.SECOND, 0);
+			t.set(Calendar.MILLISECOND, 0);
+			return t;
+		} else {
+			throw new ParseException("Not a time spec: " + timeOfDay, 0);
+		}
 	}
 
 	/**
 	 * @return the version
 	 */
 	public int getVersion() {
-		return cachedVersion;
+		return version;
 	}
 
 	/**
 	 * @return the ActionList
 	 */
 	public List<GpioAction> getActionList() {
-		return cachedActionList;
+		return actionList;
 	}
 
 }
